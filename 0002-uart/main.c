@@ -10,8 +10,8 @@ int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;
 
-	P1DIR |= BIT6;
-	P1OUT &= BIT6;
+	P1DIR |= BIT0 | BIT6;
+	P1OUT &= BIT0 | BIT6;
 
 	uart_init();
 
@@ -35,8 +35,8 @@ void uart_init(void)
 {
 	UCA0CTL1 |= UCSWRST;
 	/* select pin function */
-	P1SEL  = BIT1 | BIT2;
-	P1SEL2 = BIT1 | BIT2;
+	P1SEL  |= BIT1 | BIT2;
+	P1SEL2 |= BIT1 | BIT2;
 	/* clock */
 	UCA0CTL1 |= UCSSEL_2;  /* SMCLK */
 	UCA0BR0 = 104;         /* 1M / 9600 = 104 */
@@ -48,13 +48,13 @@ void uart_init(void)
 
 void uart_send(unsigned char data)
 {
-	while (!(IFG2 & UCA0TXIFG));
+	while(!(IFG2 & UCA0TXIFG));
 	UCA0TXBUF = data;
 }
 
 unsigned char uart_recv(void)
 {
-	while (!(IFG2 & UCA0RXIFG));
+	while(!(IFG2 & UCA0RXIFG));
 	return UCA0RXBUF;
 }
 
@@ -67,6 +67,7 @@ void uart_puts(unsigned char *s)
 interrupt(USCIAB0RX_VECTOR) usci0rx_isr(void)
 {
 	char ch = UCA0RXBUF;
+	P1OUT ^= BIT0;
 	switch(ch)
 	{
 	case '\r': uart_puts("\r\n"); break;
