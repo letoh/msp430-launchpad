@@ -11,7 +11,7 @@ int main(void)
 	WDTCTL = WDTPW | WDTHOLD;
 
 	P1DIR |= BIT0 | BIT6;
-	P1OUT &= BIT0 | BIT6;
+	P1OUT &= ~(BIT0 | BIT6);
 
 	uart_init();
 
