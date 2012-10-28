@@ -3,14 +3,13 @@
 unsigned int analogRead(unsigned int ch)
 {
 	ADC10CTL1 = ADC10SSEL_0 + ch;
-	ADC10CTL0 |= ADC10SC;
-
+	ADC10CTL0 |= ENC + ADC10SC;
 	while (1)
 	{
 		if ((ADC10CTL1 ^ ADC10BUSY) && (ADC10CTL0 & ADC10IFG))
 			break;
 	}
-	ADC10CTL0 &= ~ADC10IFG;
+	ADC10CTL0 &= ~(ENC + ADC10IFG);
 	return ADC10MEM;
 }
 
@@ -19,7 +18,6 @@ int main(void)
 	WDTCTL = WDTPW | WDTHOLD;
 	/* setup adc10 */
 	ADC10CTL0 = ADC10ON + ADC10SHT_2 + SREF_1 + REFON + REF2_5V;
-	ADC10CTL0 |= ENC;
 
 	P1DIR |= BIT6;
 
