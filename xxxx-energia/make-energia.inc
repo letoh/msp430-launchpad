@@ -1,3 +1,4 @@
+SHELL              = /bin/sh
 PWD               ?= `pwd`
 PROJECT           ?= $(lastword $(subst /, ,$(PWD)))
 
@@ -22,7 +23,7 @@ CC           = $(TARGET)-gcc
 CXX          = $(TARGET)-g++
 AR           = $(TARGET)-ar
 OBJCOPY      = $(TARGET)-objcopy
-PROG         = mspdebug
+PROG        ?= mspdebug
 
 
 TMPOBJ       = .tmp
@@ -49,9 +50,13 @@ E_EXTRA_DIRS = $(foreach dir,$(IMPORT),$(shell find $(ENERGIA_LIB_PATH) -type d 
 E_EXTRA_SRCS = $(call gen-src-list,$(E_EXTRA_DIRS))
 E_EXTRA_OBJS = $(call gen-obj-list,$(E_EXTRA_SRCS))
 
+LIBS         = $(SKETCH_LIBS) \
+			   $(if $(E_EXTRA),-lenergia_lib-$(MCU)) $(if $(E_CORE),-lenergia_core-$(MCU)) -lm
+
 
 BIN          = $(PROJECT).elf $(PROJECT).hex
 
+.SUFFIXES:
 .SUFFIXES: .c .cpp .o .elf .hex .ino
 
 .ino.cpp:
@@ -72,7 +77,9 @@ BIN          = $(PROJECT).elf $(PROJECT).hex
 	@$(CXX) -c $(CXXFLAGS) $< -o $@
 
 
-all: pre-check $(BIN)
+.PHONY: pre-check check-cross-tool-path check-tmp-out clean link-ecore link-elib
+
+all: pre-check $(E_EXTRA) $(E_CORE) $(BIN)
 	@echo 'build finished'
 
 ## private target
@@ -119,9 +126,9 @@ $(E_CORE): $(E_CORE_OBJS)
 $(E_EXTRA): $(E_EXTRA_OBJS)
 	@$(AR) rcs $@ $^
 
-$(PROJECT).elf: $(SKETCH_OBJS) $(E_EXTRA) $(E_CORE)
+$(PROJECT).elf: $(SKETCH_OBJS)
 	@echo generating $@
-	@$(CC) $(LDFLAGS) -o $@ $^ -lm 
+	@$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 flash: $(PROJECT).elf
 	@$(PROG) rf2500 "prog $<"
