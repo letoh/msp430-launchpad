@@ -1,6 +1,29 @@
 #
 # common makefile rules for msp430 project
 #
+# options fo customization:
+#
+# PROJECT           project name
+# SRCS              source list
+# BIN
+#
+# INC               additional include path
+# OPT               additional compile options, for both compiling c and c++ sources
+# LIBS              additional linking lib
+# CFLAGS
+# CXXFLAGS
+# LDFLAGS
+#
+# TARGET
+# BOARD
+# MCU
+# FREQ              clock frequency
+#
+# CROSS_ROOT
+# CROSS_TOOL_PATH   path for cross compiler
+# PROG              programming tool
+#
+#
 SHELL              = /bin/sh
 PWD               ?= `pwd`
 PROJECT           ?= $(lastword $(subst /, ,$(PWD)))
@@ -24,10 +47,11 @@ PROG        ?= mspdebug
 TMPOBJ       = .tmp
 INC         += -I$(CROSS_ROOT)/include -I$(CROSS_ROOT)/msp430/include
 OPT         += -mmcu=$(MCU) -Os -DF_CPU=$(FREQ) -Wall -ffunction-sections -fdata-sections
+LIBS        +=
 
 CFLAGS      += $(OPT) $(INC)
 CXXFLAGS    += $(OPT) $(INC) -fno-rtti -fno-enforce-eh-specs -fno-exceptions
-LDFLAGS     += -Os -Wl,-gc-sections,-u,main -mmcu=$(MCU) -L$(CROSS_ROOT)/lib -L$(TMPOBJ)
+LDFLAGS     += -Os -Wl,-gc-sections,-u,main -mmcu=$(MCU) -L$(CROSS_ROOT)/lib -L$(TMPOBJ) $(LIBS)
 
 gen-src-list = $(foreach lib,$(1),$(shell find $(lib) -iname "*.c*"))
 gen-obj-list = $(addprefix $(TMPOBJ)/,$(addsuffix .o,$(basename $(notdir $(1)))))
@@ -38,7 +62,7 @@ OBJS         = $(call gen-obj-list,$(SRCS))
 
 BIN         ?= $(PROJECT).elf $(PROJECT).hex
 
-.SUFFIXES:
+
 .SUFFIXES: .c .cpp .o .elf .hex .bin
 
 .c.o:
@@ -64,7 +88,7 @@ $(TMPOBJ)/%.o: %.cpp
 
 .PHONY: pre-check check-cross-tool-path check-tmp-out clean
 
-all: pre-check $(BIN)
+all: pre-check $(BEFORE_ALL) $(BIN) $(AFTER_ALL)
 	@echo 'build finished'
 
 check-cross-tool-path:
@@ -82,21 +106,21 @@ check-tmp-out:
 		fi; \
 	fi
 
-pre-check: check-cross-tool-path check-tmp-out $(PRECHECK)
+pre-check: check-cross-tool-path check-tmp-out
 	@echo checking finished
 	@echo
 
 $(PROJECT).elf: $(OBJS)
 	@echo linking $^ to $@ ...
-	@$(CC) $(LDFLAGS) -o $@ $^
+	@$(CC) -o $@ $^ $(LDFLAGS)
 
 flash: $(PROJECT).elf
 	@echo downloading $< ...
-	mspdebug rf2500 "prog $<"
+	@mspdebug rf2500 "prog $<"
 
-clean:
+clean: $(BEFORE_CLEAN)
 	@echo clean up
-	@rm -f *.elf *.hex *.o *.bin $(OBJS) *~
+	-@rm -f $(BIN) *.elf *.hex *.o *.bin $(OBJS) *~
 	-@if [ -d "$(TMPOBJ)" ]; then \
 		rmdir "$(TMPOBJ)"; \
 	fi

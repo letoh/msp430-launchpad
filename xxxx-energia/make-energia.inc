@@ -1,14 +1,5 @@
-SHELL              = /bin/sh
-PWD               ?= `pwd`
-PROJECT           ?= $(lastword $(subst /, ,$(PWD)))
-
-TARGET            ?= msp430
-BOARD             ?= launchpad
-MCU               ?= msp430g2553
-FREQ              ?= 16000000L
-
 SKETCH_SRCS       ?= $(wildcard *.ino)
-SKETCH_OBJS        = $(subst .ino,.o,$(SKETCH_SRCS))
+SRCS               = $(SKETCH_SRCS)
 
 ENERGIA_ROOT      ?= $(HOME)/src/msp430/energia-0101E0008
 ENERGIA_BASE      ?= $(ENERGIA_ROOT)/hardware/msp430
@@ -16,30 +7,9 @@ ENERGIA_CORE_PATH ?= $(ENERGIA_BASE)/cores/msp430
 ENERGIA_LIB_PATH  ?= $(ENERGIA_BASE)/libraries
 
 CROSS_ROOT        ?= $(ENERGIA_ROOT)/hardware/tools/msp430
-CROSS_TOOL_PATH   ?= $(CROSS_ROOT)/bin
-
-# add $(CROSS_TOOL_PATH) to path
-CC           = $(TARGET)-gcc
-CXX          = $(TARGET)-g++
-AR           = $(TARGET)-ar
-OBJCOPY      = $(TARGET)-objcopy
-PROG        ?= mspdebug
 
 
-TMPOBJ       = .tmp
-INC         += -I$(CROSS_ROOT)/include -I$(CROSS_ROOT)/msp430/include \
-		       $(addprefix -I,$(sort $(dir $(shell find $(ENERGIA_BASE) -iname "*.h"))))
-OPT         += -g -Os -Wall -ffunction-sections -fdata-sections \
-		       -mmcu=$(MCU) -DF_CPU=$(FREQ) -DARDUINO=101 -DENERGIA=8
-
-CFLAGS      += $(OPT) $(INC)
-CXXFLAGS    += $(OPT) $(INC) -fno-rtti -fno-enforce-eh-specs -fno-exceptions
-LDFLAGS     += -Os -Wl,-gc-sections,-u,main -mmcu=$(MCU) -L$(CROSS_ROOT)/lib -L$(TMPOBJ)
-
-IMPORT      ?= #Servo SPI
-
-gen-src-list = $(foreach lib,$(1),$(shell find $(lib) -iname "*.c*"))
-gen-obj-list = $(addprefix $(TMPOBJ)/,$(addsuffix .o,$(basename $(notdir $(1)))))
+IMPORT      ?= #IRremote LiquidCrystal MspFlash SPI Servo Stepper Wire
 
 E_CORE       = $(TMPOBJ)/libenergia_core-$(MCU).a
 E_CORE_SRCS  = $(call gen-src-list,$(ENERGIA_CORE_PATH))
@@ -50,75 +20,48 @@ E_EXTRA_DIRS = $(foreach dir,$(IMPORT),$(shell find $(ENERGIA_LIB_PATH) -type d 
 E_EXTRA_SRCS = $(call gen-src-list,$(E_EXTRA_DIRS))
 E_EXTRA_OBJS = $(call gen-obj-list,$(E_EXTRA_SRCS))
 
-LIBS         = $(SKETCH_LIBS) \
+
+INC         += $(addprefix -I,$(sort $(dir $(shell find $(ENERGIA_BASE) -iname "*.h"))))
+OPT         += -DARDUINO=101 -DENERGIA=8
+LIBS        += $(SKETCH_LIBS) \
 			   $(if $(E_EXTRA),-lenergia_lib-$(MCU)) $(if $(E_CORE),-lenergia_core-$(MCU)) -lm
 
-
-BIN          = $(PROJECT).elf $(PROJECT).hex
-
-.SUFFIXES:
-.SUFFIXES: .c .cpp .o .elf .hex .ino
+.SUFFIXES: .ino
 
 .ino.cpp:
 	@echo generating $@
 	@echo '#include "Energia.h"' > $@
 	@cat $< >> $@
 
-.elf.hex:
-	@echo generating $@
-	@$(OBJCOPY) -O ihex -R .eeprom $< $@
+.PHONY: check-energia-root link-ecore-srcs link-elib-srcs e-build-lib before-clean
 
-.c.o:
-	@echo building $(notdir $<) to $@ ...
-	@$(CC) -c $(CFLAGS) $< -o $@
+BEFORE_ALL   = check-energia-root link-ecore-srcs link-elib-srcs e-build-lib
+BEFORE_CLEAN = before-clean
 
-.cpp.o:
-	@echo building $(notdir $<) to $@ ...
-	@$(CXX) -c $(CXXFLAGS) $< -o $@
-
-
-.PHONY: pre-check check-cross-tool-path check-tmp-out clean link-ecore link-elib
-
-all: pre-check $(E_EXTRA) $(E_CORE) $(BIN)
-	@echo 'build finished'
+include ../make.inc
 
 ## private target
 
 check-energia-root:
-	@echo 'checking environment...'
+	@echo 'checking Energia path...'
 	@if [ -z "$(ENERGIA_ROOT)" -o ! -d "$(ENERGIA_ROOT)" ]; then \
 		echo "please setup ENERGIA_ROOT"; \
 		exit 1; \
 	fi
 	@echo "ENERGIA_ROOT = "$(ENERGIA_ROOT)
 
-check-cross-tool-path:
-	@if [ -z `which msp430-g++` ]; then \
-		echo "please add "$(CROSS_TOOL_PATH)" to PATH"; \
-		exit 1; \
-	fi
-	@echo 'found tools for '$(TARGET)
-
-check-tmp-out:
-	@if [ "$(PWD)" != "$(abspath $(TMPOBJ))" ]; then \
-		if [ ! -d "$(TMPOBJ)" ]; then \
-			mkdir "$(TMPOBJ)"; \
-			echo 'create tmp dir: '$(TMPOBJ); \
-		fi; \
-	fi
+e-build-lib: $(E_EXTRA) $(E_CORE)
+	@echo "build lib '"$(notdir $^)"' ok"
+	@echo
 
 link-src     = $(foreach src,$(1),$(shell ln -s "$(src)" "$(2)/$(notdir $(src))"))
 link-src-tmp = $(call link-src,$(1),$(TMPOBJ))
 
-link-ecore:
+link-ecore-srcs:
 	$(call link-src-tmp,$(E_CORE_SRCS))
 
-link-elib:
+link-elib-srcs:
 	$(call link-src-tmp,$(E_EXTRA_SRCS))
-
-pre-check: check-energia-root check-cross-tool-path check-tmp-out link-ecore link-elib
-	@echo checking finished
-	@echo
 
 $(E_CORE): $(E_CORE_OBJS)
 	@$(AR) rcs $@ $^
@@ -126,18 +69,9 @@ $(E_CORE): $(E_CORE_OBJS)
 $(E_EXTRA): $(E_EXTRA_OBJS)
 	@$(AR) rcs $@ $^
 
-$(PROJECT).elf: $(SKETCH_OBJS)
-	@echo generating $@
-	@$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
-
-flash: $(PROJECT).elf
-	@$(PROG) rf2500 "prog $<"
-
-clean:
-	-@rm -f $(BIN) *.elf *.hex *.o *.a *.so *~
+before-clean:
 	-@if [ -d "$(TMPOBJ)" ]; then \
 		rm -f $(E_CORE_OBJS) $(E_EXTRA_OBJS) $(E_CORE) $(E_EXTRA); \
 		rm -f $(subst .o,.*,$(E_CORE_OBJS) $(E_EXTRA_OBJS)); \
-		rmdir "$(TMPOBJ)"; \
 	fi
 
