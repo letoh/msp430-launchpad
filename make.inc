@@ -53,11 +53,15 @@ CFLAGS      += $(OPT) $(INC)
 CXXFLAGS    += $(OPT) $(INC) -fno-rtti -fno-enforce-eh-specs -fno-exceptions
 LDFLAGS     += -Os -Wl,-gc-sections,-u,main -mmcu=$(MCU) -L$(CROSS_ROOT)/lib -L$(TMPOBJ) $(LIBS)
 
+link-src     = $(foreach src,$(1),$(shell ln -f -s "$(abspath $(src))" "$(2)/$(notdir $(src))"))
+link-src-tmp = $(call link-src,$(1),$(TMPOBJ))
+
 gen-src-list = $(foreach lib,$(1),$(shell find $(lib) -iname "[!.]*.c" -o -iname "[!.]*.cpp"))
 gen-obj-list = $(addprefix $(TMPOBJ)/,$(addsuffix .o,$(basename $(notdir $(1)))))
 
 SRCS        ?= $(call gen-src-list,$(PWD))
 OBJS         = $(call gen-obj-list,$(SRCS))
+EXTSRCS      = $(foreach src,$(abspath $(SRCS)),$(if $(subst $(PWD)/,,$(dir $(src))),$(src),))
 
 
 BIN         ?= $(PROJECT).elf $(PROJECT).hex
@@ -86,7 +90,7 @@ $(TMPOBJ)/%.o: %.cpp
 	@$(OBJCOPY) -O ihex -R .eeprom $< $@
 
 
-.PHONY: pre-check check-cross-tool-path check-tmp-out clean
+.PHONY: pre-check check-cross-tool-path check-tmp-out link-proj-srcs clean
 
 all: pre-check $(BEFORE_ALL) $(BIN) $(AFTER_ALL)
 	@echo 'build finished'
@@ -106,7 +110,10 @@ check-tmp-out:
 		fi; \
 	fi
 
-pre-check: check-cross-tool-path check-tmp-out
+link-proj-srcs:
+	$(call link-src-tmp,$(EXTSRCS))
+
+pre-check: check-cross-tool-path check-tmp-out link-proj-srcs
 	@echo checking finished
 	@echo
 
@@ -122,6 +129,7 @@ clean: $(BEFORE_CLEAN)
 	@echo clean up
 	-@rm -f $(BIN) *.elf *.hex *.o *.bin $(OBJS) *~
 	-@if [ -d "$(TMPOBJ)" ]; then \
+		rm -f $(subst .o,.*,$(OBJS)); \
 		rmdir "$(TMPOBJ)"; \
 	fi
 

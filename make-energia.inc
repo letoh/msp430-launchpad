@@ -54,9 +54,6 @@ e-build-lib: $(E_EXTRA) $(E_CORE)
 	@echo "build lib '"$(notdir $^)"' ok"
 	@echo
 
-link-src     = $(foreach src,$(1),$(shell ln -s "$(src)" "$(2)/$(notdir $(src))"))
-link-src-tmp = $(call link-src,$(1),$(TMPOBJ))
-
 link-ecore-srcs:
 	$(call link-src-tmp,$(E_CORE_SRCS))
 
