@@ -53,7 +53,7 @@ CFLAGS      += $(OPT) $(INC)
 CXXFLAGS    += $(OPT) $(INC) -fno-rtti -fno-enforce-eh-specs -fno-exceptions
 LDFLAGS     += -Os -Wl,-gc-sections,-u,main -mmcu=$(MCU) -L$(CROSS_ROOT)/lib -L$(TMPOBJ) $(LIBS)
 
-gen-src-list = $(foreach lib,$(1),$(shell find $(lib) -iname "*.c*"))
+gen-src-list = $(foreach lib,$(1),$(shell find $(lib) -iname "[!.]*.c" -o -iname "[!.]*.cpp"))
 gen-obj-list = $(addprefix $(TMPOBJ)/,$(addsuffix .o,$(basename $(notdir $(1)))))
 
 SRCS        ?= $(call gen-src-list,$(PWD))
@@ -110,9 +110,9 @@ pre-check: check-cross-tool-path check-tmp-out
 	@echo checking finished
 	@echo
 
-$(PROJECT).elf: $(OBJS)
+$(PROJECT).elf: $(if $(wildcard $(TMPOBJ)),$(OBJS),pre-check $(BEFORE_ALL) $(OBJS) $(AFTER_ALL))
 	@echo linking $^ to $@ ...
-	@$(CC) -o $@ $^ $(LDFLAGS)
+	@$(CC) -o $@ $(OBJS) $(LDFLAGS)
 
 flash: $(PROJECT).elf
 	@echo downloading $< ...
