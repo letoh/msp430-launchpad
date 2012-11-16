@@ -1,5 +1,4 @@
-#include <msp430g2553.h>
-#include <legacymsp430.h>
+#include <msp430.h>
 
 int main(void)
 {
@@ -25,7 +24,8 @@ int main(void)
 	}
 }
 
-interrupt(PORT1_VECTOR) DIO_Port1(void)
+__attribute__((interrupt(PORT1_VECTOR)))
+void port1_isr(void)
 {
 	if(P1IFG & BIT3)
 	{

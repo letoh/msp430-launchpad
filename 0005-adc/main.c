@@ -1,4 +1,4 @@
-#include <msp430g2553.h>
+#include <msp430.h>
 
 unsigned int analogRead(unsigned int ch)
 {

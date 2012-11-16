@@ -1,10 +1,9 @@
-#include <msp430g2553.h>
-#include <legacymsp430.h>
+#include <msp430.h>
 
 void uart_init(void);
 void uart_send(unsigned char data);
 unsigned char uart_recv(void);
-void uart_puts(unsigned char *s);
+void uart_puts(const char *s);
 
 int main(void)
 {
@@ -87,13 +86,14 @@ unsigned char uart_recv(void)
 	return UCA0RXBUF;
 }
 
-void uart_puts(unsigned char *s)
+void uart_puts(const char *s)
 {
 	unsigned char ch;
-	while(ch = *s++) uart_send(ch);
+	while((ch = *s++)) uart_send(ch);
 }
 
-interrupt(USCIAB0RX_VECTOR) usci0rx_isr(void)
+__attribute__((interrupt(USCIAB0RX_VECTOR)))
+void usci0rx_isr(void)
 {
 	char ch = UCA0RXBUF;
 	P1OUT ^= BIT0;

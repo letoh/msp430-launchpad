@@ -1,4 +1,4 @@
-#include <msp430g2553.h>
+#include <msp430.h>
 
 #define CLOCK  1000000L
 #define DELAY  (CLOCK / 10)

@@ -1,5 +1,4 @@
-#include <msp430g2553.h>
-#include <legacymsp430.h>
+#include <msp430.h>
 
 int main(void)
 {
@@ -21,7 +20,8 @@ int main(void)
 	}
 }
 
-interrupt(TIMER0_A0_VECTOR) Timer_A0(void)
+__attribute__((interrupt(TIMER0_A0_VECTOR)))
+void timer0_a0_isr(void)
 {
 	P1OUT ^= BIT0;
 }
