@@ -1,7 +1,9 @@
 #include <msp430.h>
 
-#define CLOCK  1000000L
-#define DELAY  (CLOCK / 10)
+#ifndef F_CPU
+#define F_CPU  1000000L
+#endif
+#define DELAY  (F_CPU / 10)
 
 int main(void)
 {
