@@ -1,3 +1,5 @@
+FREQ              ?= 16000000L
+
 SKETCH_SRCS       ?= $(wildcard *.ino)
 SRCS               = $(SKETCH_SRCS)
 

@@ -31,7 +31,7 @@ PROJECT           ?= $(lastword $(subst /, ,$(PWD)))
 TARGET            ?= msp430
 BOARD             ?= launchpad
 MCU               ?= msp430g2553
-FREQ              ?= 16000000L
+FREQ              ?= 1000000L
 
 CROSS_ROOT        ?= /usr/cross/msp430
 CROSS_TOOL_PATH   ?= $(CROSS_ROOT)/bin
