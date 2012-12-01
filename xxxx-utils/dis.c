@@ -1,7 +1,16 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef unsigned short word_t;
+
+typedef struct _symRec_t symRec_t;
+struct _symRec_t
+{
+	word_t addr;
+	char *label;
+	symRec_t *next;
+};
 
 typedef struct _disCtxt_t disCtxt_t;
 struct _disCtxt_t
@@ -12,6 +21,7 @@ struct _disCtxt_t
 	const word_t *end;
 	unsigned char *buf;
 	long length;
+	symRec_t *symtbl;
 };
 
 #define isFmt1(instr)  (((instr) & 0xfc00) == 0x1000)
@@ -20,11 +30,96 @@ struct _disCtxt_t
 
 #define fetch(pCtxt)             do{\
 	(pCtxt)->instr = *(pCtxt)->cur;\
-	++(pCtxt)->cur, (pCtxt)->buf += sizeof(word_t), (pCtxt)->addr += sizeof(word_t);\
+	++(pCtxt)->cur, (pCtxt)->addr += sizeof(word_t);\
 	} while(0);
 #define decode(instr,pos,mask)  (((instr) >> (pos)) & (mask))
 // ((offset & 0x200)?-((~offset & 0x3ff) + 1):offset)
 #define evalsign(val,bit)       (((val) & (1 << ((bit) - 1)))?-((~(val) & ((1 << (bit)) - 1)) + 1):(val))
+
+
+symRec_t * getsym(disCtxt_t *pCtxt, word_t addr)
+{
+	symRec_t *curr = pCtxt->symtbl;
+	while(curr)
+	{
+		if(curr->addr == addr) break;
+		curr = curr->next;
+	}
+	return curr;
+}
+
+int addsym(disCtxt_t *pCtxt, word_t addr)
+{
+	char label[16];
+	symRec_t *curr = getsym(pCtxt, addr);
+	if(curr) return 1;
+
+	curr = (symRec_t *)malloc(sizeof(symRec_t));
+	if(NULL == curr) return 1;
+	curr->addr = addr;
+	sprintf(label, ".L%04X", addr);
+	curr->label = strdup(label);
+	curr->next = pCtxt->symtbl;
+	pCtxt->symtbl = curr;
+	return 0;
+}
+
+void delsyms(disCtxt_t *pCtxt)
+{
+	symRec_t *curr;
+	while(pCtxt->symtbl)
+	{
+		curr = pCtxt->symtbl;
+		pCtxt->symtbl = curr->next;
+		free(curr->label);
+		free(curr);
+	}
+}
+
+void sym(disCtxt_t *pCtxt)
+{
+	word_t addr;
+	word_t absaddr;
+	addsym(pCtxt, 0xc000); // for code start point
+	addsym(pCtxt, 0xffc0); // for interrupt vector
+	addsym(pCtxt, 0xffe0);
+	//addsym(pCtxt, 0xffe4);
+	while(pCtxt->cur < pCtxt->end)
+	{
+		addr = pCtxt->addr;
+		fetch(pCtxt);
+		if(pCtxt->instr == 0) {} else
+		if(isFmt1(pCtxt->instr)) {
+			word_t opcode = decode(pCtxt->instr, 7, 0x7);
+			word_t admode = decode(pCtxt->instr, 4, 0x3);
+			word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+			if(opcode == 5 && dstreg == 0) // call
+			{
+				fetch(pCtxt);
+				addsym(pCtxt, addr * ((admode == 1)?1:0) + evalsign(pCtxt->instr,10));
+			}
+		} else
+		if(isFmt2(pCtxt->instr)) {
+			word_t offset = decode(pCtxt->instr, 0, 0x3ff);
+			absaddr = addr + 2 * (evalsign(offset,10) + 1);
+			addsym(pCtxt, absaddr);
+		} else
+		if(isFmt3(pCtxt->instr)) {
+			word_t addr = pCtxt->addr - sizeof(word_t);
+			word_t opcode = decode(pCtxt->instr, 12, 0xf);
+			word_t srcreg = decode(pCtxt->instr, 8, 0xf);
+			word_t asmode = decode(pCtxt->instr, 4, 0x3);
+			word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+			if(opcode == 4 && dstreg == 0 && (asmode & 0x1)) // mov dst, pc
+			{
+				fetch(pCtxt);
+				addsym(pCtxt, addr * ((asmode == 1)?1:0) + evalsign(pCtxt->instr,10));
+			}
+		} else
+		{ }
+	}
+}
+
 
 int dis_operand(disCtxt_t *pCtxt, word_t reg, word_t mode)
 {
@@ -115,8 +210,11 @@ int dis_fmt1(disCtxt_t *pCtxt)
 	word_t byteop = decode(pCtxt->instr, 6, 0x1);
 	word_t admode = decode(pCtxt->instr, 4, 0x3);
 	word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+	symRec_t *sym;
 	if(opcode > 6) return 1;
 	if(byteop && ((opcode & 0x1) || opcode == 6)) return 1;
+	if(NULL != (sym = getsym(pCtxt, addr)))
+		printf("%s:\n", sym->label);
 	printf("[%04x] %02x %02x | %s%s",
 			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
 			fmt1_instr_str[opcode], byteop?".b":"");
@@ -140,11 +238,17 @@ int dis_fmt2(disCtxt_t *pCtxt)
 	word_t addr   = pCtxt->addr - sizeof(word_t);
 	word_t cond   = decode(pCtxt->instr, 10, 0x7);
 	word_t offset = decode(pCtxt->instr, 0, 0x3ff);
+	symRec_t *sym;
 	//int value = 2 * (((offset & 0x200)?-((~offset & 0x3ff) + 1):offset) + 1);
 	int value = 2 * (evalsign(offset,10) + 1);
-	printf("[%04x] %02x %02x | %-4s $%+d ; abs(0x%04x)\n",
+	if(NULL != (sym = getsym(pCtxt, addr)))
+		printf("%s:\n", sym->label);
+	printf("[%04x] %02x %02x | %-4s $%+d ; abs(0x%04x)",
 			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
 			fmt2_instr_str[cond], value, addr + value);
+	if(NULL != (sym = getsym(pCtxt, addr + value)))
+		printf(", %s", sym->label);
+	printf("\n");
 	return 0;
 }
 
@@ -162,7 +266,10 @@ int dis_fmt3(disCtxt_t *pCtxt)
 	word_t byteop = decode(pCtxt->instr, 6, 0x1);
 	word_t asmode = decode(pCtxt->instr, 4, 0x3);
 	word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+	symRec_t *sym;
 
+	if(NULL != (sym = getsym(pCtxt, addr)))
+		printf("%s:\n", sym->label);
 	printf("[%04x] %02x %02x | %s%s  ",
 			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
 			fmt3_instr_str[opcode], byteop?".b":"");
@@ -239,25 +346,29 @@ void dis(disCtxt_t *pCtxt)
 int dis_file(const char *fn)
 {
 	FILE *fp = fopen(fn, "rb");
-	unsigned char *buf;
-	disCtxt_t ctxt;
+	disCtxt_t ctxt = {0};
 	if(NULL == fp) return 1;
 
 	fseek(fp, 0, SEEK_END);
 	ctxt.length = ftell(fp);
 	rewind(fp);
 	//printf("length: %d\n", ctxt.length);
-	buf = (unsigned char *)malloc(ctxt.length);
-	if(NULL == buf) { fclose(fp); return 1; }
+	ctxt.buf = (unsigned char *)malloc(ctxt.length);
+	if(NULL == ctxt.buf) { fclose(fp); return 1; }
 
-	ctxt.buf = buf;
 	ctxt.addr = 0xc000;
 	ctxt.cur = (const word_t *) ctxt.buf;
 	ctxt.end = ctxt.cur + (ctxt.length / 2);
 	if(fread(ctxt.buf, ctxt.length, 1, fp))
+	{
+		sym(&ctxt);
+		ctxt.addr = 0xc000;
+		ctxt.cur = (const word_t *) ctxt.buf;
 		dis(&ctxt);
+	}
 
-	free(buf);
+	free(ctxt.buf);
+	delsyms(&ctxt);
 	fclose(fp);
 	return 0;
 }
