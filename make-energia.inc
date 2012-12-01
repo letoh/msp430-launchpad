@@ -1,6 +1,6 @@
 FREQ              ?= 16000000L
 
-SKETCH_SRCS       ?= $(wildcard *.ino)
+SKETCH_SRCS       ?= $(wildcard *.ino) $(wildcard *.pde)
 SRCS               = $(SKETCH_SRCS)
 
 ENERGIA_ROOT      ?= $(HOME)/src/msp430/energia-0101E0008
@@ -28,9 +28,14 @@ OPT         += -DARDUINO=101 -DENERGIA=8
 LIBS        += $(SKETCH_LIBS) \
 			   $(if $(E_EXTRA),-lenergia_lib-$(MCU)) $(if $(E_CORE),-lenergia_core-$(MCU)) -lm
 
-.SUFFIXES: .ino
+.SUFFIXES: .ino .pde
 
 .ino.cpp:
+	@echo generating $@
+	@echo '#include "Energia.h"' > $@
+	@cat $< >> $@
+
+.pde.cpp:
 	@echo generating $@
 	@echo '#include "Energia.h"' > $@
 	@cat $< >> $@
