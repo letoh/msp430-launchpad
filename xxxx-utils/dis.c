@@ -2,7 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef SHOW_DATA
+#define SHOW_DATA 1
+#endif
+
 typedef unsigned short word_t;
+typedef unsigned char  byte_t;
 
 typedef struct _symRec_t symRec_t;
 struct _symRec_t
@@ -12,11 +17,42 @@ struct _symRec_t
 	symRec_t *next;
 };
 
+typedef union _instr_t instr_t;
+union _instr_t {
+	struct {
+		word_t prefix   : 4;  // 0001
+		word_t reserved : 2;
+		word_t opcode   : 3;  // 0 ~ 6
+		word_t byte     : 1;
+		word_t as       : 2;  // addressing mode
+		word_t reg      : 4;  // register
+	} fmt1;
+	struct {
+		word_t prefix   : 4;  // 0010, 0011
+		word_t cond     : 2;  // 0 ~ 3
+		word_t offset   : 10; // pc = pc + 2 * offset
+	} fmt2;
+	struct {
+		word_t opcode   : 4;  // 4 ~ f
+		word_t src      : 4;  // source
+		word_t ad       : 1;  // dst addressing mode
+		word_t byte     : 1;
+		word_t as       : 2;  // src addressing mode
+		word_t dst      : 4;  // destination
+	} fmt3;
+};
+
+typedef union _data_t data_t;
+union _data_t {
+	word_t value;
+	byte_t bytes[2];
+	instr_t instr;
+};
+
 typedef struct _disCtxt_t disCtxt_t;
 struct _disCtxt_t
 {
 	word_t addr;
-	word_t instr;
 	const word_t *cur;
 	const word_t *end;
 	unsigned char *buf;
@@ -28,8 +64,8 @@ struct _disCtxt_t
 #define isFmt2(instr)  (((instr) & 0xe000) == 0x2000)
 #define isFmt3(instr)  (((instr) & 0xf000) >= 0x4000)
 
-#define fetch(pCtxt)             do{\
-	(pCtxt)->instr = *(pCtxt)->cur;\
+#define fetch(pCtxt,data)             do{\
+	(data) = *(pCtxt)->cur;\
 	++(pCtxt)->cur, (pCtxt)->addr += sizeof(word_t);\
 	} while(0);
 #define decode(instr,pos,mask)  (((instr) >> (pos)) & (mask))
@@ -78,6 +114,7 @@ void delsyms(disCtxt_t *pCtxt)
 
 void sym(disCtxt_t *pCtxt)
 {
+	data_t data;
 	word_t addr;
 	word_t absaddr;
 	addsym(pCtxt, 0xc000); // for code start point
@@ -87,33 +124,33 @@ void sym(disCtxt_t *pCtxt)
 	while(pCtxt->cur < pCtxt->end)
 	{
 		addr = pCtxt->addr;
-		fetch(pCtxt);
-		if(pCtxt->instr == 0) {} else
-		if(isFmt1(pCtxt->instr)) {
-			word_t opcode = decode(pCtxt->instr, 7, 0x7);
-			word_t admode = decode(pCtxt->instr, 4, 0x3);
-			word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+		fetch(pCtxt, data.value);
+		if(data.value == 0) {} else
+		if(isFmt1(data.value)) {
+			word_t opcode = decode(data.value, 7, 0x7);
+			word_t admode = decode(data.value, 4, 0x3);
+			word_t dstreg = decode(data.value, 0, 0xf);
 			if(opcode == 5 && dstreg == 0) // call
 			{
-				fetch(pCtxt);
-				addsym(pCtxt, addr * ((admode == 1)?1:0) + evalsign(pCtxt->instr,10));
+				fetch(pCtxt, data.value);
+				addsym(pCtxt, addr * ((admode == 1)?1:0) + evalsign(data.value,10));
 			}
 		} else
-		if(isFmt2(pCtxt->instr)) {
-			word_t offset = decode(pCtxt->instr, 0, 0x3ff);
+		if(isFmt2(data.value)) {
+			word_t offset = decode(data.value, 0, 0x3ff);
 			absaddr = addr + 2 * (evalsign(offset,10) + 1);
 			addsym(pCtxt, absaddr);
 		} else
-		if(isFmt3(pCtxt->instr)) {
+		if(isFmt3(data.value)) {
 			word_t addr = pCtxt->addr - sizeof(word_t);
-			word_t opcode = decode(pCtxt->instr, 12, 0xf);
-			word_t srcreg = decode(pCtxt->instr, 8, 0xf);
-			word_t asmode = decode(pCtxt->instr, 4, 0x3);
-			word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+			word_t opcode = decode(data.value, 12, 0xf);
+			word_t srcreg = decode(data.value, 8, 0xf);
+			word_t asmode = decode(data.value, 4, 0x3);
+			word_t dstreg = decode(data.value, 0, 0xf);
 			if(opcode == 4 && dstreg == 0 && (asmode & 0x1)) // mov dst, pc
 			{
-				fetch(pCtxt);
-				addsym(pCtxt, addr * ((asmode == 1)?1:0) + evalsign(pCtxt->instr,10));
+				fetch(pCtxt, data.value);
+				addsym(pCtxt, addr * ((asmode == 1)?1:0) + evalsign(data.value,10));
 			}
 		} else
 		{ }
@@ -121,81 +158,72 @@ void sym(disCtxt_t *pCtxt)
 }
 
 
-int dis_operand(disCtxt_t *pCtxt, word_t reg, word_t mode)
+int dis_operand(disCtxt_t *pCtxt, word_t reg, word_t mode, data_t *pData)
+{
+	switch(reg)
+	{
+	case 3: return 0;
+	case 0:
+		switch(mode)
+		{
+		case 1: case 3:
+			fetch(pCtxt, pData->value);
+			return 1;
+		default: break;
+		}
+		break;
+	case 2:
+	default:
+		switch(mode)
+		{
+		case 1:
+			fetch(pCtxt, pData->value);
+			return 1;
+		default: break;
+		}
+		break;
+	}
+	return 0;
+}
+
+int print_operand(disCtxt_t *pCtxt, word_t reg, word_t mode, data_t data)
 {
 	switch(reg)
 	{
 	case 0:
 		switch(mode)
 		{
-		case 0: case 2:
-			printf("r%d", reg);
-			break;
-		case 1:
-			fetch(pCtxt);
-			printf("0x%04x(r0)", pCtxt->instr);
-			break;
-		case 3:  // only for As
-			fetch(pCtxt);
-			printf("#%d", evalsign(pCtxt->instr,16));
-			break;
-		default: return 1;
+		case 1: printf("0x%04x(r0)", data.value); return 0;
+		case 3: printf("#%d", evalsign(data.value,16)); return 0;
+		default: break;
 		}
 		break;
 	case 2:
 		switch(mode)
 		{
-		case 0:
-			printf("r%d", reg);
-			break;
-		case 1:
-			fetch(pCtxt);
-			printf("&0x%04x", pCtxt->instr);
-			break;
-		case 2: case 3:
-			printf("#%d", 1 << mode);
-			break;
-		default: return 1;
+		case 1: printf("&0x%04x", data.value); return 0;
+		case 2: case 3: printf("#%d", 1 << mode); return 0;
 		}
 		break;
-	case 3:
-		switch(mode)
-		{
-		case 3:
-#if 0
-			printf("#-1");
-			break;
-		case 0: case 1: case 2:
-			printf("#%d", mode);
-#else
-		case 0: case 1: case 2:
-			printf("#%d", evalsign(mode, 2));
-#endif
-			break;
-		default: return 1;
-		}
-		break;
+	case 3: printf("#%d", evalsign(mode, 2)); return 0;
 	default:
-		if(reg > 15) return 1;
 		switch(mode)
 		{
-		case 0:
-			printf("r%d", reg);
-			break;
 		case 1:
-			fetch(pCtxt);
-			printf("0x%04x(r%d)", pCtxt->instr, reg);
-			break;
+			//printf("0x%04x(r%d)", data.value, reg);
+			printf("%d(r%d)", evalsign(data.value,16), reg);
+			return 0;
 		case 2:
 			printf("@r%d", reg);
-			break;
+			return 0;
 		case 3:
 			printf("@r%d+", reg);
-			break;
-		default: return 1;
+			return 0;
+		default: break;
 		}
 		break;
 	}
+	printf("r%d", reg);
 	return 0;
 }
 
@@ -203,27 +231,44 @@ const char* fmt1_instr_str[] =
 {
 	"rrc", "swpb", "rra", "sxt", "push", "call", "reti"
 };
-int dis_fmt1(disCtxt_t *pCtxt)
+int dis_fmt1(disCtxt_t *pCtxt, data_t data)
 {
 	word_t addr = pCtxt->addr - sizeof(word_t);
-	word_t opcode = decode(pCtxt->instr, 7, 0x7);
-	word_t byteop = decode(pCtxt->instr, 6, 0x1);
-	word_t admode = decode(pCtxt->instr, 4, 0x3);
-	word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+	word_t opcode = decode(data.value, 7, 0x7);
+	word_t byteop = decode(data.value, 6, 0x1);
+	word_t admode = decode(data.value, 4, 0x3);
+	word_t dstreg = decode(data.value, 0, 0xf);
 	symRec_t *sym;
+	data_t operand;
+	int num = dis_operand(pCtxt, dstreg, admode, &operand);
+
 	if(opcode > 6) return 1;
 	if(byteop && ((opcode & 0x1) || opcode == 6)) return 1;
 	if(NULL != (sym = getsym(pCtxt, addr)))
 		printf("%s:\n", sym->label);
-	printf("[%04x] %02x %02x | %s%s",
-			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
-			fmt1_instr_str[opcode], byteop?".b":"");
+#if SHOW_DATA
+	printf("[%04x] %02x %02x", addr, data.bytes[0], data.bytes[1]);
+	printf((num)?" %02x %02x":"      ", operand.bytes[0], operand.bytes[1]);
+	printf(" | ");
+#endif
+	printf("%s%s", fmt1_instr_str[opcode], byteop?".b":"");
 	if(opcode < 6)
 	{
 		printf("  ");
-		dis_operand(pCtxt, dstreg, admode);
-		if(dstreg == 0 && admode == 3)
-			printf("   ; 0x%04x", pCtxt->instr);
+		if(opcode == 5) // call
+		{
+			printf("#0x%04x", operand.value);
+			if(NULL != (sym = getsym(pCtxt, operand.value)))
+				printf("   ; %s", sym->label);
+			else
+				printf("   ; undefined function");
+		}
+		else
+		{
+			print_operand(pCtxt, dstreg, admode, operand);
+			if(dstreg == 0 && admode == 3)
+				printf("   ; 0x%04x", operand.value);
+		}
 	}
 	printf("\n");
 	return 0;
@@ -233,18 +278,21 @@ const char* fmt2_instr_str[] =
 {
 	"jnz", "jz", "jnc", "jc", "jn", "jge", "jl", "jmp"
 };
-int dis_fmt2(disCtxt_t *pCtxt)
+int dis_fmt2(disCtxt_t *pCtxt, data_t data)
 {
 	word_t addr   = pCtxt->addr - sizeof(word_t);
-	word_t cond   = decode(pCtxt->instr, 10, 0x7);
-	word_t offset = decode(pCtxt->instr, 0, 0x3ff);
+	word_t cond   = decode(data.value, 10, 0x7);
+	word_t offset = decode(data.value, 0, 0x3ff);
 	symRec_t *sym;
 	//int value = 2 * (((offset & 0x200)?-((~offset & 0x3ff) + 1):offset) + 1);
 	int value = 2 * (evalsign(offset,10) + 1);
 	if(NULL != (sym = getsym(pCtxt, addr)))
 		printf("%s:\n", sym->label);
-	printf("[%04x] %02x %02x | %-4s $%+d ; abs(0x%04x)",
-			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
+#if SHOW_DATA
+	printf("[%04x] %02x %02x       | ",
+			addr, data.bytes[0], data.bytes[1]);
+#endif
+	printf("%-4s $%+d ; abs(0x%04x)",
 			fmt2_instr_str[cond], value, addr + value);
 	if(NULL != (sym = getsym(pCtxt, addr + value)))
 		printf(", %s", sym->label);
@@ -257,89 +305,220 @@ const char* fmt3_instr_str[] =
 	NULL, NULL, NULL, NULL,
 	"mov", "add", "addc", "subc", "sub", "cmp", "dadd", "bit", "bic", "bis", "xor", "and"
 };
-int dis_fmt3(disCtxt_t *pCtxt)
+int dis_fmt3(disCtxt_t *pCtxt, data_t data)
 {
 	word_t addr = pCtxt->addr - sizeof(word_t);
-	word_t opcode = decode(pCtxt->instr, 12, 0xf);
-	word_t srcreg = decode(pCtxt->instr, 8, 0xf);
-	word_t admode = decode(pCtxt->instr, 7, 0x1);
-	word_t byteop = decode(pCtxt->instr, 6, 0x1);
-	word_t asmode = decode(pCtxt->instr, 4, 0x3);
-	word_t dstreg = decode(pCtxt->instr, 0, 0xf);
+	word_t opcode = decode(data.value, 12, 0xf);
+	word_t srcreg = decode(data.value, 8, 0xf);
+	word_t admode = decode(data.value, 7, 0x1);
+	word_t byteop = decode(data.value, 6, 0x1);
+	word_t asmode = decode(data.value, 4, 0x3);
+	word_t dstreg = decode(data.value, 0, 0xf);
+	data_t operand1, operand2;
+	int num1 = dis_operand(pCtxt, srcreg, asmode, &operand1);
+	int num2 = dis_operand(pCtxt, dstreg, admode, &operand2);
 	symRec_t *sym;
 
 	if(NULL != (sym = getsym(pCtxt, addr)))
 		printf("%s:\n", sym->label);
-	printf("[%04x] %02x %02x | %s%s  ",
-			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
-			fmt3_instr_str[opcode], byteop?".b":"");
-
-	dis_operand(pCtxt, srcreg, asmode);
-	printf(", ");
-	dis_operand(pCtxt, dstreg, admode);
+#if SHOW_DATA
+	printf("[%04x] %02x %02x", addr, data.bytes[0], data.bytes[1]);
+	if(num1)      printf(" %02x %02x", operand1.bytes[0], operand1.bytes[1]);
+	else if(num2) printf(" %02x %02x", operand2.bytes[0], operand2.bytes[1]);
+	else          printf("      ");
+	printf(" | ");
+#endif
+	do {
+		if(opcode == 4) // mov
+		{
+			if(srcreg == 1 && asmode == 3) // @sp+
+			{
+				printf("pop   ");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+			else if(dstreg == 0) // pc
+			{
+				printf("br   0x%04x", operand1.value);
+				//print_operand(pCtxt, srcreg, asmode, operand1);
+				break;
+			}
+		}
+		else if(opcode == 5) // add
+		{
+			if(srcreg == 3)
+			{
+			   if(asmode == 1) // #1
+			   {
+					printf("inc%s  ", byteop?".b":"");
+					print_operand(pCtxt, dstreg, admode, operand2);
+					break;
+			   }
+			   else if(asmode == 2) // #2
+			   {
+					printf("incd%s ", byteop?".b":"");
+					print_operand(pCtxt, dstreg, admode, operand2);
+					break;
+			   }
+			}
+			else if(srcreg == dstreg && asmode == admode)
+			{
+				printf("rla%s  ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+		}
+		else if(opcode == 6) // addc
+		{
+			if(srcreg == 3 && asmode == 0) // #0
+			{
+				printf("addc%s ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+			else if(srcreg == dstreg && asmode == admode)
+			{
+				printf("rlc%s  ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+		}
+		else if(opcode == 7) // subc
+		{
+			if(srcreg == 3 && asmode == 0) // #0
+			{
+				printf("sbc%s  ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+		}
+		else if(opcode == 8) // sub
+		{
+			if(srcreg == 3)
+			{
+			   if(asmode == 1) // #1
+			   {
+					printf("dec%s  ", byteop?".b":"");
+					print_operand(pCtxt, dstreg, admode, operand2);
+					break;
+			   }
+			   else if(asmode == 2) // #2
+			   {
+					printf("decd%s ", byteop?".b":"");
+					print_operand(pCtxt, dstreg, admode, operand2);
+					break;
+			   }
+			}
+		}
+		else if(opcode == 9) // cmp
+		{
+			if(srcreg == 3 && asmode == 0) // #0
+			{
+				printf("tst%s  ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+		}
+		else if(opcode == 10) // dadd
+		{
+			if(srcreg == 3 && asmode == 0)  // #0
+			{
+				printf("dadc%s ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+		}
+		else if(opcode == 14) // xor
+		{
+			if(srcreg == 3 && asmode == 1)  // #1
+			{
+				printf("inv%s  ", byteop?".b":"");
+				print_operand(pCtxt, dstreg, admode, operand2);
+				break;
+			}
+		}
+		printf("%s%s  ", fmt3_instr_str[opcode], byteop?".b":"");
+		print_operand(pCtxt, srcreg, asmode, operand1);
+		printf(", ");
+		print_operand(pCtxt, dstreg, admode, operand2);
+		if(srcreg == 0 && asmode == 3)
+			printf("   ; #0x%04x", operand1.value);
+	} while(0);
 	printf("\n");
+#if SHOW_DATA
+	if(num1 && num2)
+		printf("[%04x] %02x %02x\n", addr + 4, operand2.bytes[0], operand2.bytes[1]);
+#endif
 	return 0;
 }
 
-int dis_data(disCtxt_t *pCtxt)
+int dis_data(disCtxt_t *pCtxt, data_t data)
 {
 	word_t addr = pCtxt->addr - sizeof(word_t);
-	printf("[%04x] %02x %02x | .word 0x%04x\n",
-			addr, pCtxt->instr & 0xff, pCtxt->instr >> 8,
-			pCtxt->instr);
+#if SHOW_DATA
+	printf("[%04x] %02x %02x       | ",
+			addr, data.bytes[0], data.bytes[1]);
+#endif
+	printf(".word 0x%04x\n", data.value);
 	return 0;
 }
 
-int dis_pseudo(disCtxt_t *pCtxt)
+int dis_pseudo(disCtxt_t *pCtxt, data_t data)
 {
+#if SHOW_DATA
+#define LINE_HDR  "[%04x] %02x %02x       | "
+#else
+#define LINE_HDR  ""
+#endif
 	word_t addr = pCtxt->addr - sizeof(word_t);
-	switch(pCtxt->instr)
+	switch(data.value)
 	{
 	case 0x4303: // mov #0, #0 => nop
-		printf("[%04x] %02x %02x | nop\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "nop\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xc232: // bic #8,sr => dint
-		printf("[%04x] %02x %02x | dint\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "dint\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xd232: // bis #8,sr => eint
-		printf("[%04x] %02x %02x | eint\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "eint\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xc312: // bic #1,sr => clrc
-		printf("[%04x] %02x %02x | clrc\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "clrc\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xc222: // bic #4,sr => clrn
-		printf("[%04x] %02x %02x | clrn\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "clrn\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xc322: // bic #2,sr => clrz
-		printf("[%04x] %02x %02x | clrz\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "clrz\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xd312: // bis #1,sr => setc
-		printf("[%04x] %02x %02x | setc\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "setc\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xd222: // bis #4,sr => setn
-		printf("[%04x] %02x %02x | setn\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "setn\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0xd322: // bis #2,sr => setz
-		printf("[%04x] %02x %02x | setz\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "setz\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	case 0x4130: // mov @sp+,pc
-		printf("[%04x] %02x %02x | ret\n", addr, pCtxt->instr & 0xff, pCtxt->instr >> 8);
+		printf(LINE_HDR "ret\n", addr, data.bytes[0], data.bytes[1]);
 		return 0;
 	}
 	return 1;
+#undef LINE_HDR
 }
 
 void dis(disCtxt_t *pCtxt)
 {
+	data_t data;
 	while(pCtxt->cur < pCtxt->end)
 	{
-		fetch(pCtxt);
-		if(pCtxt->instr == 0) {} else
-		if(0 == dis_pseudo(pCtxt)) { continue; } else
-		if(isFmt1(pCtxt->instr)) { dis_fmt1(pCtxt); } else
-		if(isFmt2(pCtxt->instr)) { dis_fmt2(pCtxt); } else
-		if(isFmt3(pCtxt->instr)) { dis_fmt3(pCtxt); } else
-		{ dis_data(pCtxt); }
+		fetch(pCtxt, data.value);
+		if(data.value == 0 || 0 == dis_pseudo(pCtxt, data)) { continue; }
+		if(isFmt1(data.value)) { dis_fmt1(pCtxt, data); } else
+		if(isFmt2(data.value)) { dis_fmt2(pCtxt, data); } else
+		if(isFmt3(data.value)) { dis_fmt3(pCtxt, data); } else
+		{ dis_data(pCtxt, data); }
 	}
 }
 
