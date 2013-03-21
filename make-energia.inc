@@ -1,4 +1,5 @@
 FREQ              ?= 16000000L
+VARIANT           ?= launchpad   # launchpad / fraunchpad
 
 SKETCH_SRCS       ?= $(wildcard *.ino) $(wildcard *.pde)
 SRCS               = $(SKETCH_SRCS)
@@ -7,6 +8,7 @@ ENERGIA_ROOT      ?= $(HOME)/src/msp430/energia-0101E0008
 ENERGIA_BASE      ?= $(ENERGIA_ROOT)/hardware/msp430
 ENERGIA_CORE_PATH ?= $(ENERGIA_BASE)/cores/msp430
 ENERGIA_LIB_PATH  ?= $(ENERGIA_BASE)/libraries
+ENERGIA_VAR_PATH  ?= $(ENERGIA_BASE)/variants/$(VARIANT)
 
 CROSS_ROOT        ?= $(ENERGIA_ROOT)/hardware/tools/msp430
 
@@ -23,7 +25,9 @@ E_EXTRA_SRCS = $(call gen-src-list,$(E_EXTRA_DIRS))
 E_EXTRA_OBJS = $(call gen-obj-list,$(E_EXTRA_SRCS))
 
 
-INC         += $(addprefix -I,$(sort $(dir $(shell find $(ENERGIA_BASE) -iname "*.h"))))
+INC         += $(addprefix -I,$(sort $(dir $(shell find $(ENERGIA_CORE_PATH) -iname "*.h")))) \
+				$(addprefix -I,$(sort $(dir $(shell find $(ENERGIA_LIB_PATH) -iname "*.h")))) \
+				$(addprefix -I,$(sort $(dir $(shell find $(ENERGIA_VAR_PATH) -iname "*.h"))))
 OPT         += -DARDUINO=101 -DENERGIA=8
 LIBS        += $(SKETCH_LIBS) \
 			   $(if $(E_EXTRA),-lenergia_lib-$(MCU)) $(if $(E_CORE),-lenergia_core-$(MCU)) -lm
